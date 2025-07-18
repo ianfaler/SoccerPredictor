@@ -116,10 +116,10 @@ def iterative_backtesting(files: List[Tuple[Path, pd.DataFrame, pd.DataFrame]], 
         output = determine_matches_to_bet_on(dfs, predict_set_processed_ids, ignoreodds)
         matches_to_bet_on, bmmatches_to_bet_on, predict_set_processed_ids = output
 
-        predict_matches_to_bet_on = predict_matches_to_bet_on.append(matches_to_bet_on[Dataset.Predict.value],
-                                                                     ignore_index=True)
-        bmpredict_matches_to_bet_on = bmpredict_matches_to_bet_on.append(bmmatches_to_bet_on[Dataset.Predict.value],
-                                                                         ignore_index=True)
+        predict_matches_to_bet_on = pd.concat([predict_matches_to_bet_on, matches_to_bet_on[Dataset.Predict.value]],
+                                              ignore_index=True)
+        bmpredict_matches_to_bet_on = pd.concat([bmpredict_matches_to_bet_on, bmmatches_to_bet_on[Dataset.Predict.value]],
+                                               ignore_index=True)
 
     # Whole timeframe of predictions (not necessarily matching first and last predictions dates)
     date_range = f"{predict_set_date_min.strftime(DATE_FORMAT)}-{predict_set_date_max.strftime(DATE_FORMAT)}"
@@ -201,9 +201,9 @@ def determine_matches_to_bet_on(dfs: Dict[str, pd.DataFrame],
                 opponent_row = dfs[dataset][r["opponent"]].dropna(subset=["pred"])
                 opponent_row = opponent_row.loc[opponent_row["match_id"] == r["match_id"]]
 
-                if int(opponent_row["match_id"]) in processed_matches_ids:
+                if int(opponent_row["match_id"].iloc[0]) in processed_matches_ids:
                     continue
-                elif dataset == Dataset.Predict.value and int(opponent_row["match_id"]) in predict_set_processed_ids:
+                elif dataset == Dataset.Predict.value and int(opponent_row["match_id"].iloc[0]) in predict_set_processed_ids:
                     continue
 
                 # Append to processed ids
@@ -239,8 +239,8 @@ def determine_matches_to_bet_on(dfs: Dict[str, pd.DataFrame],
                                        "pred_perc": team1_pred_perc,
                                        "odds_wd": team1_odds,
                                        "bet_won": won}
-                    matches_to_bet_on[dataset] = matches_to_bet_on[dataset].append(match_to_bet_on,
-                                                                                   ignore_index=True)
+                    matches_to_bet_on[dataset] = pd.concat([matches_to_bet_on[dataset], pd.DataFrame([match_to_bet_on])],
+                                                           ignore_index=True)
                 # Model2 predicting win-or-draw and model1 predicting loss
                 elif team1_pred == 0 and team2_pred == 1 and \
                         (team2_odds > ignoreodds or np.isclose(team2_odds, ignoreodds)):
@@ -258,8 +258,8 @@ def determine_matches_to_bet_on(dfs: Dict[str, pd.DataFrame],
                                        "pred_perc": team2_pred_perc,
                                        "odds_wd": team2_odds,
                                        "bet_won": won}
-                    matches_to_bet_on[dataset] = matches_to_bet_on[dataset].append(match_to_bet_on,
-                                                                                   ignore_index=True)
+                    matches_to_bet_on[dataset] = pd.concat([matches_to_bet_on[dataset], pd.DataFrame([match_to_bet_on])],
+                                                           ignore_index=True)
 
                 # Compute bookmaker predictions the same way for comparison
                 if r["bmpred"] == 1 and (team1_odds > ignoreodds or np.isclose(team1_odds, ignoreodds)):
@@ -277,8 +277,8 @@ def determine_matches_to_bet_on(dfs: Dict[str, pd.DataFrame],
                                        "pred_perc": r["bmpred_perc"],
                                        "odds_wd": team1_odds,
                                        "bet_won": won}
-                    bmmatches_to_bet_on[dataset] = bmmatches_to_bet_on[dataset].append(match_to_bet_on,
-                                                                                       ignore_index=True)
+                    bmmatches_to_bet_on[dataset] = pd.concat([bmmatches_to_bet_on[dataset], pd.DataFrame([match_to_bet_on])],
+                                                             ignore_index=True)
                 elif opponent_row["bmpred"].iloc[0] == 1 and \
                         (team2_odds > ignoreodds or np.isclose(team2_odds, ignoreodds)):
                     if dataset == Dataset.Predict.value and APPLY_THRESHOLD_SELECTION and \
@@ -295,8 +295,8 @@ def determine_matches_to_bet_on(dfs: Dict[str, pd.DataFrame],
                                        "pred_perc": opponent_row["bmpred_perc"].iloc[0],
                                        "odds_wd": team2_odds,
                                        "bet_won": won}
-                    bmmatches_to_bet_on[dataset] = bmmatches_to_bet_on[dataset].append(match_to_bet_on,
-                                                                                       ignore_index=True)
+                    bmmatches_to_bet_on[dataset] = pd.concat([bmmatches_to_bet_on[dataset], pd.DataFrame([match_to_bet_on])],
+                                                             ignore_index=True)
 
         matches_to_bet_on[dataset].sort_values(by=["date", "id"], inplace=True)
         bmmatches_to_bet_on[dataset].sort_values(by=["date", "id"], inplace=True)
@@ -405,10 +405,10 @@ def compute_testset_best_threshold(df: pd.DataFrame, verbose: bool = True) -> Di
                 continue
 
             accuracy = accuracy_score([1]*len(subset), subset["bet_won"].tolist())
-            thresholds = thresholds.append({"threshold": t,
-                                            "accuracy": accuracy,
-                                            "nbets": len(subset)},
-                                           ignore_index=True)
+            thresholds = pd.concat([thresholds, pd.DataFrame([{"threshold": t,
+                                                               "accuracy": accuracy,
+                                                               "nbets": len(subset)}])],
+                                  ignore_index=True)
 
     # Get lowest threshold with highest accuracy
     best_threshold = thresholds.loc[thresholds.index == thresholds["accuracy"].idxmax()].iloc[0]

@@ -8,10 +8,8 @@ import sys
 from typing import Dict, Tuple
 
 import dash
-import dash_core_components as dcc
+from dash import dcc, html, dash_table
 from dash.dependencies import Input, Output
-import dash_html_components as html
-import dash_table
 import plotly.graph_objs as go
 from plotly.subplots import make_subplots
 
@@ -416,4 +414,4 @@ def run(name: str, host: str, port: int, ignoreodds: float) -> None:
     show_matches_to_bet_on(ignoreodds)
     load_layouts()
 
-    app.run_server(debug=False, host=host, port=port)
+    app.run(debug=False, host=host, port=port)
