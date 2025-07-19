@@ -74,6 +74,20 @@ def main() -> None:
     backtester_parser.add_argument("--path", type=str, action="store", default=f"{DATA_DIR}{MODEL_DIR}",
                                    help="Path to folder where the trained models are saved.")
 
+    # API server args
+    api_parser = subparsers.add_parser(RunMode.API.value, help="Run REST API server for data management.",
+                                       formatter_class=ArgumentDefaultsHelpFormatter)
+    api_parser.add_argument("--port", type=int, action="store", default=5000,
+                            help="Custom port for API server.")
+    api_parser.add_argument("--host", type=str, action="store", default="0.0.0.0",
+                            help="Custom host for API server.")
+    api_parser.add_argument("--debug", action="store_true", default=False,
+                            help="Enable debug mode for API server.")
+    api_parser.add_argument("--update-data", action="store_true", default=False,
+                            help="Update football data on startup.")
+    api_parser.add_argument("--seasons", nargs="*", type=str, default=None,
+                            help="Seasons to update (e.g., 2024 2023). If not specified, updates current season.")
+
     # common args for trainer and visualizer
     for p in [trainer_parser, visualizer_parser]:
         p.add_argument("--name", type=str, action="store",
@@ -110,6 +124,36 @@ def main() -> None:
         from soccerpredictor.backtester import backtester
         try:
             backtester.run(backtest_args.path, backtest_args.ignoreodds)
+        except KeyboardInterrupt:
+            print("> Received CTRL+C command. Exiting.")
+    elif args.command == RunMode.API.value:
+        print("Starting API server...")
+        api_args, _ = api_parser.parse_known_args()
+        check_api_args(parser, api_args)
+        print(api_args)
+
+        from soccerpredictor.api.api_server import run_server
+        from soccerpredictor.api.api_manager import APIManager
+        
+        # Load configuration
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        
+        config = {
+            'FOOTBALL_DATA_API_KEY': os.getenv('FOOTBALL_DATA_API_KEY', ''),
+            'RAPIDAPI_KEY': os.getenv('RAPIDAPI_KEY', ''),
+        }
+        
+        # Update data if requested
+        if api_args.update_data:
+            print("Updating football data...")
+            api_manager = APIManager(config)
+            summary = api_manager.update_data(api_args.seasons)
+            print(f"Data update completed: {summary['new_matches']} new, {summary['updated_matches']} updated")
+        
+        try:
+            run_server(host=api_args.host, port=api_args.port, debug=api_args.debug)
         except KeyboardInterrupt:
             print("> Received CTRL+C command. Exiting.")
     elif args.command == RunMode.Train.value:
@@ -235,6 +279,19 @@ def check_backtester_args(parser: ArgumentParser, args: Namespace) -> None:
     :param args: Given arguments.
     """
     check_ignoreodds_arg(parser, args)
+
+
+def check_api_args(parser: ArgumentParser, args: Namespace) -> None:
+    """
+    Checks API mode args.
+
+    :param parser: Argument parser.
+    :param args: Given arguments.
+    """
+    if args.port < 1 or args.port > 65535:
+        parser.error("Port must be between 1 and 65535.")
+    if args.seasons and any(not season.isdigit() for season in args.seasons):
+        parser.error("Seasons must be numeric (e.g., 2024).")
 
 
 def check_ignoreodds_arg(parser: ArgumentParser, args: Namespace) -> None:
