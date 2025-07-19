@@ -1,45 +1,39 @@
-absl-py==0.8.1
-astor==0.8.0
-Click==7.0
-cycler==0.10.0
-dash==1.4.1
-dash-core-components==1.3.1
-dash-html-components==1.0.1
-dash-renderer==1.1.2
-dash-table==4.4.1
-Flask==1.1.1
-Flask-Compress==1.4.0
-future==0.18.1
-gast==0.3.2
-google-pasta==0.1.7
-grpcio==1.24.3
-h5py==2.10.0
-itsdangerous==1.1.0
-Jinja2==2.10.3
-joblib==0.14.0
-Keras==2.3.1
-Keras-Applications==1.0.8
-Keras-Preprocessing==1.1.0
-kiwisolver==1.1.0
-Markdown==3.1.1
-MarkupSafe==1.1.1
-matplotlib==3.1.1
-numpy==1.16.4
-pandas==0.25.2
-plotly==4.2.1
-protobuf==3.10.0
-pydot==1.4.1
-pyparsing==2.4.2
-python-dateutil==2.8.0
-pytz==2019.3
-PyYAML==5.1.2
-retrying==1.3.3
-scikit-learn==0.21.3
-scipy==1.3.1
-six==1.12.0
-tensorboard==1.14.0
-tensorflow==1.14.0
-tensorflow-estimator==1.14.0
-termcolor==1.1.0
-Werkzeug==0.16.0
-wrapt==1.11.2
+# Updated requirements for SoccerPredictor with API integration
+requests==2.31.0
+sqlite3-utils==3.35.2
+python-dotenv==1.0.0
+
+# Core ML and Data Processing
+absl-py==2.0.0
+pandas==2.3.1
+numpy==2.3.1
+scikit-learn==1.7.1
+matplotlib==3.10.3
+PyYAML==6.0.2
+
+# Web Framework (updated versions)
+dash==3.1.1
+plotly==6.2.0
+Flask==3.1.1
+Flask-Compress==2.0.0
+
+# Deep Learning
+tensorflow==2.18.0
+Keras==3.8.0
+
+# Utilities
+click==8.1.7
+python-dateutil==2.9.0
+pytz==2025.1
+joblib==1.4.2
+
+# API and HTTP clients
+httpx==0.26.0
+aiohttp==3.9.1
+
+# Data validation
+pydantic==2.10.2
+
+# Development and testing
+pytest==8.3.4
+black==24.12.0

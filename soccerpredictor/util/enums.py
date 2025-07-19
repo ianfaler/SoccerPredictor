@@ -9,6 +9,7 @@ class RunMode(Enum):
     Train = "train"
     Vis = "vis"
     Backtest = "backtest"
+    API = "api"
 
 
 class Dataset(Enum):
