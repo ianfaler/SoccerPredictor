@@ -8,10 +8,12 @@ import pandas as pd
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
-import logging
+import time
 from dataclasses import dataclass
 
-logger = logging.getLogger(__name__)
+from ..util.logging_config import get_logger
+
+logger = get_logger('football_data_fetcher')
 
 @dataclass
 class MatchData:
@@ -75,8 +77,20 @@ class FootballDataFetcher:
                     'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
                 },
                 'rate_limit': 100  # depends on subscription
+            },
+            'footystats': {
+                'base_url': 'https://api.footystats.org/v2',
+                'headers': {
+                    'X-API-KEY': self.config.get('FOOTYSTATS_API_KEY', ''),
+                    'Accept': 'application/json'
+                },
+                'rate_limit': 500  # requests per day for free tier
             }
         }
+        
+        # Rate limiting
+        self._last_request_times = {}
+        self._request_counts = {}
     
     def fetch_premier_league_fixtures(self, season: str = "2024") -> List[MatchData]:
         """
@@ -85,18 +99,28 @@ class FootballDataFetcher:
         :param season: Season year (e.g., "2024" for 2024-25 season)
         :return: List of MatchData objects
         """
-        try:
-            # Try football-data.org first (free)
-            return self._fetch_from_football_data_org(season)
-        except Exception as e:
-            logger.warning(f"Failed to fetch from football-data.org: {e}")
+        logger.info(f"Fetching Premier League fixtures for season {season}")
+        
+        # Try multiple APIs in order of preference
+        apis_to_try = [
+            ('footystats', self._fetch_from_footystats),
+            ('football_data_org', self._fetch_from_football_data_org),
+            ('rapidapi', self._fetch_from_rapidapi)
+        ]
+        
+        for api_name, fetch_method in apis_to_try:
             try:
-                # Fallback to RapidAPI
-                return self._fetch_from_rapidapi(season)
-            except Exception as e2:
-                logger.error(f"Failed to fetch from RapidAPI: {e2}")
-                # Return demo/mock data as last resort
-                return self._get_demo_data()
+                matches = fetch_method(season)
+                if matches:
+                    logger.info(f"Successfully fetched {len(matches)} matches from {api_name}")
+                    return matches
+            except Exception as e:
+                logger.warning(f"Failed to fetch from {api_name}: {e}")
+                continue
+        
+        # All APIs failed, return demo data
+        logger.warning("All APIs failed, using demo data")
+        return self._get_demo_data()
     
     def _fetch_from_football_data_org(self, season: str) -> List[MatchData]:
         """Fetch data from football-data.org API."""
@@ -164,6 +188,126 @@ class FootballDataFetcher:
         
         logger.info(f"Fetched {len(matches)} matches from RapidAPI")
         return matches
+    
+    def _fetch_from_footystats(self, season: str) -> List[MatchData]:
+        """Fetch data from FootyStats API."""
+        self._wait_for_rate_limit('footystats')
+        
+        url = f"{self.apis['footystats']['base_url']}/league-matches"
+        headers = self.apis['footystats']['headers']
+        
+        # FootyStats uses league ID for Premier League
+        params = {
+            'league_id': 2,  # Premier League
+            'season_id': self._get_footystats_season_id(season)
+        }
+        
+        response = self.session.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        matches = []
+        
+        if 'data' in data:
+            for match in data['data']:
+                # Extract match details
+                home_team = match.get('home_name', '')
+                away_team = match.get('away_name', '')
+                match_date = match.get('date_unix', '')
+                
+                # Convert Unix timestamp to date
+                if match_date:
+                    match_date = datetime.fromtimestamp(int(match_date)).strftime('%Y-%m-%d')
+                
+                match_data = MatchData(
+                    id=match.get('id', 0),
+                    date=match_date,
+                    season=season,
+                    league="Premier League",
+                    home_team=home_team,
+                    away_team=away_team,
+                    home_goals=match.get('home_goals'),
+                    away_goals=match.get('away_goals'),
+                    home_odds_wd=match.get('odds_home_win_draw'),
+                    away_odds_wd=match.get('odds_away_win_draw'),
+                    home_rating=match.get('home_team_rating', 75.0),
+                    away_rating=match.get('away_team_rating', 75.0),
+                    home_errors=match.get('home_errors', 0),
+                    away_errors=match.get('away_errors', 0),
+                    home_red_cards=match.get('home_red_cards', 0),
+                    away_red_cards=match.get('away_red_cards', 0),
+                    home_shots=match.get('home_shots', 0),
+                    away_shots=match.get('away_shots', 0)
+                )
+                matches.append(match_data)
+        
+        logger.info(f"Fetched {len(matches)} matches from FootyStats")
+        return matches
+    
+    def _get_footystats_season_id(self, season: str) -> int:
+        """Convert year to FootyStats season ID."""
+        year = int(season)
+        # FootyStats season mapping (this may need adjustment based on their API)
+        season_mapping = {
+            2025: 2025, 2024: 2024, 2023: 2023, 2022: 2022, 2021: 2021,
+            2020: 2020, 2019: 2019, 2018: 2018, 2017: 2017, 2016: 2016,
+            2015: 2015, 2014: 2014, 2013: 2013, 2012: 2012, 2011: 2011
+        }
+        return season_mapping.get(year, year)
+    
+    def _wait_for_rate_limit(self, api_name: str):
+        """Implement rate limiting for API calls."""
+        current_time = time.time()
+        
+        if api_name not in self._last_request_times:
+            self._last_request_times[api_name] = current_time
+            self._request_counts[api_name] = 0
+            return
+        
+        # Get rate limit for this API
+        rate_limit = self.apis[api_name]['rate_limit']
+        
+        # Simple rate limiting: wait 1 second between requests for high-volume APIs
+        if api_name in ['footystats', 'rapidapi']:
+            time_since_last = current_time - self._last_request_times[api_name]
+            if time_since_last < 1.0:  # Wait at least 1 second
+                time.sleep(1.0 - time_since_last)
+        
+        self._last_request_times[api_name] = time.time()
+        self._request_counts[api_name] = self._request_counts.get(api_name, 0) + 1
+    
+    def fetch_historical_data_bulk(self, start_year: int = 2020, end_year: int = 2025) -> Dict[str, List[MatchData]]:
+        """
+        Fetch historical data for multiple seasons efficiently.
+        
+        :param start_year: Starting year
+        :param end_year: Ending year
+        :return: Dictionary mapping season to matches
+        """
+        logger.info(f"Fetching bulk historical data from {start_year} to {end_year}")
+        
+        all_data = {}
+        
+        for year in range(start_year, end_year + 1):
+            season = str(year)
+            logger.info(f"Fetching data for season {season}")
+            
+            try:
+                matches = self.fetch_premier_league_fixtures(season)
+                all_data[season] = matches
+                logger.info(f"Fetched {len(matches)} matches for season {season}")
+                
+                # Small delay between seasons to be respectful to APIs
+                time.sleep(2)
+                
+            except Exception as e:
+                logger.error(f"Failed to fetch data for season {season}: {e}")
+                all_data[season] = []
+        
+        total_matches = sum(len(matches) for matches in all_data.values())
+        logger.info(f"Bulk fetch complete: {total_matches} total matches across {len(all_data)} seasons")
+        
+        return all_data
     
     def _get_demo_data(self) -> List[MatchData]:
         """Generate demo data when APIs are unavailable."""

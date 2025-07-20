@@ -13,6 +13,7 @@ from soccerpredictor.util.common import get_latest_models_dir, get_model_setting
 from soccerpredictor.util.constants import FOLDER_PREFIX_LEN, DATA_DIR, MODEL_DIR, VERBOSITY_LEVELS
 from soccerpredictor.util.config import SPConfig
 from soccerpredictor.util.enums import RunMode
+from soccerpredictor.util.logging_config import setup_logging, get_logger
 
 # For printing stats during training
 pd.set_option("display.width", None)
@@ -26,6 +27,9 @@ def main() -> None:
     Runs model training or visualization.
 
     """
+    # Setup logging first
+    logger = setup_logging()
+    
     parser = ArgumentParser(description="SoccerPredictor:", formatter_class=ArgumentDefaultsHelpFormatter)
     subparsers = parser.add_subparsers(title="Modes to run", dest="command")
 
@@ -105,32 +109,32 @@ def main() -> None:
         parser.print_help()
         return
     elif args.command == RunMode.Vis.value:
-        print("Visualizing...")
+        logger.info("Starting visualization...")
         vis_args, _ = visualizer_parser.parse_known_args()
         check_visualizer_args(visualizer_parser, vis_args)
-        print(vis_args)
+        logger.debug(f"Visualization args: {vis_args}")
 
         from soccerpredictor.visualizer import visualizer
         try:
             visualizer.run(vis_args.name, vis_args.host, vis_args.port, vis_args.ignoreodds)
         except KeyboardInterrupt:
-            print("> Received CTRL+C command. Exiting.")
+            logger.info("Received CTRL+C command. Exiting visualization.")
     elif args.command == RunMode.Backtest.value:
-        print("Backtesting...")
+        logger.info("Starting backtesting...")
         backtest_args, _ = backtester_parser.parse_known_args()
         check_backtester_args(backtester_parser, backtest_args)
-        print(backtest_args)
+        logger.debug(f"Backtest args: {backtest_args}")
 
         from soccerpredictor.backtester import backtester
         try:
             backtester.run(backtest_args.path, backtest_args.ignoreodds)
         except KeyboardInterrupt:
-            print("> Received CTRL+C command. Exiting.")
+            logger.info("Received CTRL+C command. Exiting backtesting.")
     elif args.command == RunMode.API.value:
-        print("Starting API server...")
+        logger.info("Starting API server...")
         api_args, _ = api_parser.parse_known_args()
         check_api_args(parser, api_args)
-        print(api_args)
+        logger.debug(f"API args: {api_args}")
 
         from soccerpredictor.api.api_server import run_server
         from soccerpredictor.api.api_manager import APIManager
@@ -147,17 +151,17 @@ def main() -> None:
         
         # Update data if requested
         if api_args.update_data:
-            print("Updating football data...")
+            logger.info("Updating football data...")
             api_manager = APIManager(config)
             summary = api_manager.update_data(api_args.seasons)
-            print(f"Data update completed: {summary['new_matches']} new, {summary['updated_matches']} updated")
+            logger.info(f"Data update completed: {summary['new_matches']} new, {summary['updated_matches']} updated")
         
         try:
             run_server(host=api_args.host, port=api_args.port, debug=api_args.debug)
         except KeyboardInterrupt:
-            print("> Received CTRL+C command. Exiting.")
+            logger.info("Received CTRL+C command. Exiting API server.")
     elif args.command == RunMode.Train.value:
-        print("Running model...")
+        logger.info("Starting model training...")
         train_args, _ = trainer_parser.parse_known_args()
         config = SPConfig()
 
@@ -167,7 +171,7 @@ def main() -> None:
 
         check_trainer_args(trainer_parser, train_args)
         config.set_args(train_args)
-        print(train_args)
+        logger.debug(f"Training args: {train_args}")
 
         dbmanager = SPDBManager()
         try:
@@ -175,8 +179,8 @@ def main() -> None:
 
             # Load previous settings if we resume training
             if train_args.resume:
-                print("Resuming training, loading previous settings... "
-                      "Any conflicting parameters will be ignored.")
+                logger.info("Resuming training, loading previous settings... "
+                           "Any conflicting parameters will be ignored.")
 
                 # Load previous settings
                 folder = get_latest_models_dir(train_args.name)
@@ -191,7 +195,7 @@ def main() -> None:
                 # Need to generate folder prefix before seeding random number generators
                 import random
                 generated_folder_prefix = "".join(random.choices(ascii_uppercase, k=FOLDER_PREFIX_LEN))
-                print(f"New generated folder prefix: '{generated_folder_prefix}'")
+                logger.info(f"New generated folder prefix: '{generated_folder_prefix}'")
                 set_rng_seed(train_args.seed)
 
                 from soccerpredictor.trainer.trainer import SPTrainer
@@ -203,9 +207,9 @@ def main() -> None:
                 trainer.cleanup()
 
         except KeyboardInterrupt:
-            print("> Received CTRL+C command. Exiting.")
+            logger.info("Received CTRL+C command. Exiting training.")
         except (FileNotFoundError, ValueError, OperationalError) as e:
-            print(e)
+            logger.error(f"Training failed: {e}")
             sys.exit(1)
         finally:
             dbmanager.disconnect()
@@ -232,7 +236,7 @@ def set_rng_seed(seed: Optional[int]) -> None:
         np.random.seed(seed)
         from tensorflow.compat.v1 import set_random_seed
         set_random_seed(seed)
-        print(f"Running with seed: {seed}")
+        logger.info(f"Running with seed: {seed}")
 
 
 def check_trainer_args(parser: ArgumentParser, args: Namespace) -> None:
