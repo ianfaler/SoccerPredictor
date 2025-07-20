@@ -128,6 +128,16 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# SoccerPredictor specific
+logs/
+*.log
+data/models/*/
+!data/models/.gitkeep
+data/*.db-shm
+data/*.db-wal
+temp/
+.DS_Store
+
 .idea/
 soccerpredictor/__pycache__/
 soccerpredictor/*/__pycache__/

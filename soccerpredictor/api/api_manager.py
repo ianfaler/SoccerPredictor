@@ -4,7 +4,6 @@ API Manager for handling data updates and database synchronization.
 
 import sqlite3
 import pandas as pd
-import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -12,8 +11,9 @@ import json
 
 from .football_data_fetcher import FootballDataFetcher, MatchData
 from ..util.constants import DATA_DIR, DB_FILE
+from ..util.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger('api_manager')
 
 class APIManager:
     """
@@ -107,11 +107,12 @@ class APIManager:
         finally:
             conn.close()
     
-    def update_data(self, seasons: List[str] = None) -> Dict[str, Any]:
+    def update_data(self, seasons: List[str] = None, force_update: bool = False) -> Dict[str, Any]:
         """
         Update database with latest football data.
         
         :param seasons: List of seasons to update (default: current season)
+        :param force_update: Force update even if data exists
         :return: Summary of update operation
         """
         if seasons is None:
@@ -124,45 +125,95 @@ class APIManager:
             'total_matches': 0,
             'new_matches': 0,
             'updated_matches': 0,
+            'skipped_matches': 0,
+            'force_update': force_update,
             'errors': []
         }
         
         try:
-            for season in seasons:
-                season_summary = self._update_season_data(season)
-                summary['total_matches'] += season_summary['total_matches']
-                summary['new_matches'] += season_summary['new_matches']
-                summary['updated_matches'] += season_summary['updated_matches']
-                summary['errors'].extend(season_summary['errors'])
+            # For bulk updates, use efficient bulk fetching
+            if len(seasons) > 1:
+                logger.info(f"Performing bulk update for {len(seasons)} seasons")
+                start_year = min(int(s) for s in seasons)
+                end_year = max(int(s) for s in seasons)
+                
+                bulk_data = self.fetcher.fetch_historical_data_bulk(start_year, end_year)
+                
+                for season in seasons:
+                    matches = bulk_data.get(season, [])
+                    season_summary = self._update_season_data_from_matches(season, matches, force_update)
+                    summary['total_matches'] += season_summary['total_matches']
+                    summary['new_matches'] += season_summary['new_matches']
+                    summary['updated_matches'] += season_summary['updated_matches']
+                    summary['skipped_matches'] += season_summary.get('skipped_matches', 0)
+                    summary['errors'].extend(season_summary['errors'])
+            else:
+                # Single season update
+                for season in seasons:
+                    season_summary = self._update_season_data(season, force_update)
+                    summary['total_matches'] += season_summary['total_matches']
+                    summary['new_matches'] += season_summary['new_matches']
+                    summary['updated_matches'] += season_summary['updated_matches']
+                    summary['skipped_matches'] += season_summary.get('skipped_matches', 0)
+                    summary['errors'].extend(season_summary['errors'])
             
             logger.info(f"Data update completed: {summary}")
             
         except Exception as e:
             error_msg = f"Failed to update data: {e}"
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)
             summary['errors'].append(error_msg)
         
         return summary
     
-    def _update_season_data(self, season: str) -> Dict[str, Any]:
+    def _update_season_data(self, season: str, force_update: bool = False) -> Dict[str, Any]:
         """Update data for a specific season."""
         summary = {
             'season': season,
             'total_matches': 0,
             'new_matches': 0,
             'updated_matches': 0,
+            'skipped_matches': 0,
             'errors': []
         }
         
         try:
             # Fetch matches for the season
             matches = self.fetcher.fetch_premier_league_fixtures(season)
-            summary['total_matches'] = len(matches)
+            return self._update_season_data_from_matches(season, matches, force_update)
             
+        except Exception as e:
+            error_msg = f"Failed to update season {season}: {e}"
+            logger.error(error_msg, exc_info=True)
+            summary['errors'].append(error_msg)
+            return summary
+    
+    def _update_season_data_from_matches(self, season: str, matches: List[MatchData], force_update: bool = False) -> Dict[str, Any]:
+        """Update season data from a list of matches."""
+        summary = {
+            'season': season,
+            'total_matches': len(matches),
+            'new_matches': 0,
+            'updated_matches': 0,
+            'skipped_matches': 0,
+            'errors': []
+        }
+        
+        if not matches:
+            logger.warning(f"No matches found for season {season}")
+            return summary
+        
+        try:
             conn = sqlite3.connect(self.db_path)
             
             for match in matches:
                 try:
+                    # Check if fixture exists and skip if not forcing update
+                    fixture_exists = self._fixture_exists(conn, match.id)
+                    if fixture_exists and not force_update:
+                        summary['skipped_matches'] += 1
+                        continue
+                    
                     # Ensure teams exist
                     home_team_id = self._ensure_team_exists(conn, match.home_team)
                     away_team_id = self._ensure_team_exists(conn, match.away_team)
@@ -172,7 +223,7 @@ class APIManager:
                     away_stats_id = self._update_team_stats(conn, away_team_id, match.away_team, season)
                     
                     # Insert or update fixture
-                    if self._fixture_exists(conn, match.id):
+                    if fixture_exists:
                         self._update_fixture(conn, match, home_team_id, away_team_id, home_stats_id, away_stats_id)
                         summary['updated_matches'] += 1
                     else:
@@ -189,7 +240,7 @@ class APIManager:
             
         except Exception as e:
             error_msg = f"Failed to update season {season}: {e}"
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)
             summary['errors'].append(error_msg)
         
         return summary

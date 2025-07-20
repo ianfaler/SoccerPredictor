@@ -3,34 +3,48 @@ Flask REST API server for managing football data updates and providing endpoints
 """
 
 import os
-import logging
 from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_compress import Compress
+from flask_cors import CORS
 from dotenv import load_dotenv
+from marshmallow import ValidationError
 
 from .api_manager import APIManager
+from ..util.logging_config import get_logger, setup_logging
+from ..util.validation import (
+    FixturesQuerySchema, DataUpdateSchema, validate_request_data,
+    PaginationValidator, SeasonValidator, TeamValidator, validate_api_keys
+)
 
 # Load environment variables
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Setup logging
+logger = setup_logging() if not get_logger().handlers else get_logger('api_server')
 
 def create_app() -> Flask:
     """Create and configure the Flask application."""
     app = Flask(__name__)
     app.config['JSON_SORT_KEYS'] = False
+    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max request size
     
-    # Enable compression
+    # Enable compression and CORS
     Compress(app)
+    CORS(app, origins=['http://localhost:3000', 'http://localhost:8080'])
     
     # Load API configuration from environment variables
     config = {
         'FOOTBALL_DATA_API_KEY': os.getenv('FOOTBALL_DATA_API_KEY', ''),
         'RAPIDAPI_KEY': os.getenv('RAPIDAPI_KEY', ''),
     }
+    
+    # Validate API keys
+    api_key_status = validate_api_keys(config)
+    if not any(api_key_status.values()):
+        logger.warning("No valid API keys found. Application will use demo data only.")
+    else:
+        logger.info(f"API keys configured: {list(k for k, v in api_key_status.items() if v)}")
     
     # Initialize API manager
     api_manager = APIManager(config)
@@ -62,20 +76,26 @@ def create_app() -> Flask:
         """Update football data from external APIs."""
         try:
             data = request.get_json() or {}
-            seasons = data.get('seasons', None)
             
-            if seasons and not isinstance(seasons, list):
-                return jsonify({'error': 'seasons must be a list'}), 400
+            # Validate request data
+            try:
+                validated_data = validate_request_data(DataUpdateSchema(), data)
+            except ValidationError as e:
+                logger.warning(f"Invalid data update request: {e}")
+                return jsonify({'error': str(e)}), 400
             
-            logger.info(f"Starting data update for seasons: {seasons}")
-            summary = api_manager.update_data(seasons)
+            seasons = validated_data.get('seasons')
+            force_update = validated_data.get('force_update', False)
+            
+            logger.info(f"Starting data update for seasons: {seasons}, force: {force_update}")
+            summary = api_manager.update_data(seasons, force_update)
             
             return jsonify(summary)
             
         except Exception as e:
-            logger.error(f"Failed to update data: {e}")
+            logger.error(f"Failed to update data: {e}", exc_info=True)
             return jsonify({
-                'error': str(e),
+                'error': 'Internal server error during data update',
                 'timestamp': datetime.now().isoformat()
             }), 500
     
@@ -142,11 +162,24 @@ def create_app() -> Flask:
             from ..util.constants import DATA_DIR, DB_FILE
             from pathlib import Path
             
-            # Get query parameters
-            season = request.args.get('season')
-            team = request.args.get('team')
-            limit = request.args.get('limit', 100, type=int)
-            offset = request.args.get('offset', 0, type=int)
+            # Get and validate query parameters
+            query_params = {
+                'season': request.args.get('season'),
+                'team': request.args.get('team'),
+                'limit': request.args.get('limit', 100, type=int),
+                'offset': request.args.get('offset', 0, type=int)
+            }
+            
+            try:
+                validated_params = validate_request_data(FixturesQuerySchema(), query_params)
+            except ValidationError as e:
+                logger.warning(f"Invalid fixtures query: {e}")
+                return jsonify({'error': str(e)}), 400
+            
+            season = validated_params.get('season')
+            team = validated_params.get('team')
+            limit = validated_params.get('limit', 100)
+            offset = validated_params.get('offset', 0)
             
             db_path = Path(DATA_DIR) / DB_FILE
             conn = sqlite3.connect(db_path)
